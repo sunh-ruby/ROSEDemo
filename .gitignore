@@ -1,0 +1,8 @@
+.env
+__pycache__/
+*.py[cod]
+*.engine
+*.onnx
+*.pt
+*.pth
+artifacts/

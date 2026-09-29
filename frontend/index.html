@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#050607">
+  <title>Pathology Inference Studio</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="Pathology Inference Studio home">
+        <span class="brand-mark"><i></i><i></i><i></i></span>
+        <span class="brand-name">Intuitive<span> / LungAI</span></span>
+      </a>
+      <div class="system-state">
+        <span class="ready-dot" id="readyDot"></span>
+        <span id="engineState">CONNECTING ENGINE</span>
+        <span class="state-divider"></span>
+        <span id="gpuLabel">RTX 6000 ADA</span>
+        <span class="state-divider"></span>
+        <span id="precisionLabel">TRT + YOLO · FP16</span>
+      </div>
+    </header>
+
+    <main>
+      <section class="command-row" aria-label="Slide selection">
+        <label class="path-field">
+          <span class="field-label">PATH</span>
+          <input id="slidePath" type="text" spellcheck="false" value="/mnt/sdb/UHN/batch3/UHN_5510.Slide10.svs" aria-label="Whole-slide image path">
+        </label>
+        <label class="tissue-field">
+          <span class="field-label">TISSUE TYPE</span>
+          <select id="tissueType" aria-label="Select tissue type">
+            <option value="" selected disabled>Select tissue type</option>
+            <option value="lung">Lung</option>
+            <option value="lymph_node">Lymph Node</option>
+          </select>
+        </label>
+        <button id="runButton" class="run-button" type="button" disabled>
+          <span>RUN INFERENCE</span><span class="button-arrow">↗</span>
+        </button>
+      </section>
+
+      <section class="intro-row">
+        <div>
+          <p class="eyebrow"><span class="eyebrow-line"></span> RAPID ONSITE EVALUATION</p>
+          <h1>See the signal<br><span>inside the slide.</span></h1>
+        </div>
+      </section>
+
+      <div id="errorMessage" class="error-message" role="alert" hidden></div>
+
+      <section class="analysis-layout" aria-label="Slide and inference visualization">
+        <div class="view-column">
+          <div class="view-head">
+            <span class="view-index">01</span><span class="view-title">SPECIMEN</span>
+            <span id="slideDimensions" class="view-meta">AWAITING INPUT</span>
+          </div>
+          <div class="slide-viewport" id="originalViewport">
+            <div class="empty-state" id="originalEmpty">
+              <span class="empty-reticle"><i></i></span>
+              <span>AWAITING SPECIMEN</span>
+            </div>
+            <img id="slideImage" alt="Whole-slide overview" hidden>
+            <canvas class="target-layer" id="originalTarget" aria-hidden="true"></canvas>
+            <div class="viewport-caption" id="originalCaption">WHOLE-SLIDE OVERVIEW</div>
+          </div>
+        </div>
+
+        <div class="view-column">
+          <div class="view-head">
+            <span class="view-index">02</span><span class="view-title">INFERENCE MAP</span>
+            <span id="mapState" class="view-meta">NO PREDICTIONS</span>
+          </div>
+          <div class="slide-viewport map-viewport" id="mapViewport">
+            <div class="empty-state map-empty" id="mapEmpty">
+              <span class="map-grid-mark"></span>
+              <span>THE MAP WILL FORM HERE</span>
+            </div>
+            <canvas id="heatmap" aria-label="Rasterized region prediction heatmap"></canvas>
+            <canvas class="target-layer" id="mapTarget" aria-hidden="true"></canvas>
+            <div class="map-legend" id="mapLegend" hidden>
+              <div id="lungLegend" class="map-legend-group">
+                <span><i class="legend-dot cancer"></i>CANCER</span>
+                <span><i class="legend-dot granuloma"></i>GRANULOMA</span>
+                <span><i class="legend-dot necrosis"></i>NECROSIS</span>
+              </div>
+              <span id="lymphLegend" hidden><i class="legend-dot lymphocyte"></i>GREEN &gt; 40 DETECTIONS</span>
+            </div>
+          </div>
+        </div>
+
+        <aside class="readout" aria-label="Accumulated prediction counts">
+          <div class="readout-heading">
+            <span class="view-index">03</span>
+            <div><span class="view-title">REGION SIGNAL</span><small>POSITIVE BY CLASS</small></div>
+          </div>
+          <div id="lungReadout">
+            <div id="classRows" class="class-rows">
+              <div class="class-row">
+                <div class="class-row-top"><span class="class-name"><i class="class-dot cancer"></i>CANCER</span><span class="class-count">—</span></div>
+                <div class="class-track"><i class="class-fill cancer-fill"></i></div>
+              </div>
+              <div class="class-row">
+                <div class="class-row-top"><span class="class-name"><i class="class-dot granuloma"></i>GRANULOMA</span><span class="class-count">—</span></div>
+                <div class="class-track"><i class="class-fill granuloma-fill"></i></div>
+              </div>
+              <div class="class-row">
+                <div class="class-row-top"><span class="class-name"><i class="class-dot necrosis"></i>NECROSIS</span><span class="class-count">—</span></div>
+                <div class="class-track"><i class="class-fill necrosis-fill"></i></div>
+              </div>
+            </div>
+            <div class="readout-foot">
+              <span>ENGINE BATCH</span><strong id="batchLabel">4</strong>
+            </div>
+          </div>
+          <div id="lymphReadout" class="lymph-readout" hidden>
+            <div class="lymph-metric">
+              <span class="assessment-label">LYMPHOCYTE-SUFFICIENT REGIONS</span>
+              <strong id="lymphSufficientRegions">0</strong>
+              <small>PATCHES WITH &gt; 40 DETECTIONS</small>
+            </div>
+            <div class="lymph-metric">
+              <span class="assessment-label">TOP-5 REGION AVERAGE</span>
+              <strong id="lymphTop5Average">—</strong>
+              <small>DETECTIONS PER REGION</small>
+            </div>
+            <div class="readout-foot">
+              <span>DETECTOR BATCH</span><strong id="lymphBatchLabel">8</strong>
+            </div>
+          </div>
+          <div id="slideAssessment" class="assessment-panel" hidden>
+            <div class="assessment-row">
+              <div><span class="assessment-label">SLIDE-LEVEL ADEQUACY</span><small id="assessmentRule" class="assessment-rule">&gt; 50 POSITIVE REGIONS</small></div>
+              <strong id="adequacyValue" class="assessment-value">—</strong>
+            </div>
+            <div id="etiologyRow" class="assessment-row etiology-row" hidden>
+              <div><span id="assessmentResultLabel" class="assessment-label">OBSERVED ETIOLOGY</span></div>
+              <strong id="etiologyValue" class="etiology-value">—</strong>
+            </div>
+          </div>
+        </aside>
+      </section>
+
+      <section class="progress-section" aria-label="Inference progress">
+        <div class="progress-topline">
+          <div class="scan-state"><span class="scan-pulse" id="scanPulse"></span><span id="scanLabel">STANDING BY</span></div>
+          <span id="progressPercent" class="progress-percent">0%</span>
+        </div>
+        <div class="progress-track"><div id="progressFill" class="progress-fill"></div></div>
+        <div class="metrics-row">
+          <div><span class="metric-label">REGIONS ANALYZED</span><strong id="regionsValue">0 <small>/ 0</small></strong></div>
+          <div><span class="metric-label">ELAPSED</span><strong id="elapsedValue">0.0 <small>SEC</small></strong></div>
+          <div><span class="metric-label">THROUGHPUT</span><strong id="throughputValue">— <small>REGIONS / SEC</small></strong></div>
+          <div><span class="metric-label">EST. REMAINING</span><strong id="etaValue">—</strong></div>
+        </div>
+      </section>
+    </main>
+    <footer class="footer-line"><span>LOCAL INFERENCE</span><span>WHOLE-SLIDE / REGION-LEVEL ANALYSIS</span><span>NO SLIDE UPLOAD</span></footer>
+  </div>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>
