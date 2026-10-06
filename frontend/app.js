@@ -16,8 +16,6 @@ const errorMessage = document.getElementById("errorMessage");
 const classRows = document.getElementById("classRows");
 const lungReadout = document.getElementById("lungReadout");
 const lymphReadout = document.getElementById("lymphReadout");
-const lymphLegend = document.getElementById("lymphLegend");
-const lungLegend = document.getElementById("lungLegend");
 const lymphSufficientRegions = document.getElementById("lymphSufficientRegions");
 const lymphTop5Average = document.getElementById("lymphTop5Average");
 const progressFill = document.getElementById("progressFill");
@@ -38,7 +36,6 @@ const slideDimensions = document.getElementById("slideDimensions");
 const mapState = document.getElementById("mapState");
 const originalEmpty = document.getElementById("originalEmpty");
 const mapEmpty = document.getElementById("mapEmpty");
-const mapLegend = document.getElementById("mapLegend");
 const originalCaption = document.getElementById("originalCaption");
 
 const classColors = ["#ff4f9a", "#41c9ef", "#ffb14e"];
@@ -46,8 +43,8 @@ const logitThresholdProbability = 1 / (1 + Math.exp(-0.5));
 let source = null;
 let gridColumns = 0;
 let gridRows = 0;
-let target = null;
 let currentTarget = null;
+let playback = { active: false, cells: [], head: 0, position: 0, available: 0, finished: false, rowMs: 100, onDone: null };
 let currentTissueType = "";
 let modelsReady = false;
 let inferenceRunning = false;
@@ -109,14 +106,30 @@ function drawReticle(context, canvas, position, time) {
   context.restore();
 }
 
+function revealCells(limit) {
+  let end = playback.head;
+  while (end < playback.cells.length && playback.cells[end][0] < limit) end += 1;
+  if (end === playback.head) return;
+  drawCells(playback.cells.slice(playback.head, end), currentTissueType);
+  playback.head = end;
+}
+
 function animate(time) {
-  if (target) {
-    if (!currentTarget) currentTarget = { ...target };
-    const amount = 1 - Math.exp(-Math.min(time - lastFrame, 48) / 105);
-    currentTarget.x += (target.x - currentTarget.x) * amount;
-    currentTarget.y += (target.y - currentTarget.y) * amount;
-  }
+  const elapsed = Math.min(time - lastFrame, 48);
   lastFrame = time;
+  if (playback.active && gridRows) {
+    playback.position = Math.min(playback.position + elapsed / playback.rowMs, playback.available);
+    const row = Math.min(Math.floor(playback.position), gridRows - 1);
+    const sweep = Math.max(0, Math.min(1, (playback.position - row - 0.2) / 0.6));
+    currentTarget = { x: sweep, y: (row + 0.5) / gridRows };
+    revealCells(row * gridColumns + Math.floor(sweep * gridColumns));
+    if (playback.finished && playback.position >= gridRows && playback.head >= playback.cells.length) {
+      playback.active = false;
+      const done = playback.onDone;
+      playback.onDone = null;
+      if (done) done();
+    }
+  }
   resizeTargetCanvases();
   drawReticle(targetContexts[0], originalTarget, currentTarget, time);
   drawReticle(targetContexts[1], mapTarget, currentTarget, time);
@@ -139,11 +152,12 @@ function resetVisualization(meta) {
   slideImage.hidden = false;
   originalEmpty.hidden = true;
   mapEmpty.hidden = true;
-  mapLegend.hidden = false;
   originalCaption.textContent = "WHOLE-SLIDE OVERVIEW";
   slideDimensions.textContent = `${meta.slide_width.toLocaleString()} × ${meta.slide_height.toLocaleString()} PX`;
   mapState.textContent = `${gridColumns} × ${gridRows} REGIONS`;
-  document.getElementById("batchLabel").textContent = meta.tissue_type === "lung" ? meta.batch_size : "—";
+  document.getElementById("batchLabel").textContent = meta.tissue_type === "lung"
+    ? `${meta.batch_size} / ${meta.engine_batch_size}`
+    : "—";
   document.getElementById("lymphBatchLabel").textContent = meta.batch_size;
   lymphSufficientRegions.textContent = "0";
   lymphTop5Average.textContent = "—";
@@ -155,8 +169,17 @@ function resetVisualization(meta) {
   etaValue.textContent = "—";
   slideAssessment.hidden = true;
   etiologyRow.hidden = true;
-  target = null;
-  currentTarget = null;
+  playback = {
+    active: true,
+    cells: [],
+    head: 0,
+    position: 0,
+    available: 0,
+    finished: false,
+    rowMs: Math.max(100, Math.min(250, 6000 / gridRows)),
+    onDone: null,
+  };
+  currentTarget = { x: 0, y: 0.5 / gridRows };
 }
 
 function updateClassRows(names, counts) {
@@ -176,10 +199,6 @@ function showTissueMode(tissueType) {
   const lymph = tissueType === "lymph_node";
   lungReadout.hidden = !lung;
   lymphReadout.hidden = !lymph;
-  lungLegend.hidden = !lung;
-  lymphLegend.hidden = !lymph;
-  document.getElementById("batchLabel").textContent = lung ? "4" : "—";
-  document.getElementById("lymphBatchLabel").textContent = lymph ? "8" : "—";
   lymphSufficientRegions.textContent = "0";
   lymphTop5Average.textContent = "—";
   updateClassRows(["Cancer", "Granuloma", "Necrosis"], [0, 0, 0]);
@@ -263,7 +282,8 @@ function drawCells(cells, tissueType) {
 }
 
 function onProgress(data, names) {
-  drawCells(data.cells || [], data.tissue_type);
+  if (data.cells && data.cells.length) playback.cells.push(...data.cells);
+  playback.available = Math.max(playback.available, Math.min(gridRows, data.processed_regions / gridColumns));
   const ratio = Math.max(0, Math.min(1, data.progress || 0));
   progressFill.style.width = `${ratio * 100}%`;
   progressPercent.textContent = `${(ratio * 100).toFixed(1)}%`;
@@ -280,9 +300,6 @@ function onProgress(data, names) {
     lymphSufficientRegions.textContent = (data.sufficient_regions || 0).toLocaleString();
     lymphTop5Average.textContent = Number(data.top5_average || 0).toFixed(1);
   }
-  if (Number.isFinite(data.cursor_x) && Number.isFinite(data.cursor_y)) {
-    target = { x: data.cursor_x, y: data.cursor_y };
-  }
 }
 
 async function loadStatus() {
@@ -293,11 +310,11 @@ async function loadStatus() {
     pathInput.value = status.example_slide || pathInput.value;
     engineState.textContent = "MODELS READY";
     gpuLabel.textContent = status.gpu.toUpperCase();
-    document.getElementById("batchLabel").textContent = status.batch_size;
-    document.getElementById("lymphBatchLabel").textContent = status.lymph_batch_size;
     readyDot.classList.remove("offline");
     modelsReady = true;
     showTissueMode(tissueSelect.value);
+    document.getElementById("batchLabel").textContent = `${status.inference_batch_size} / ${status.batch_size}`;
+    document.getElementById("lymphBatchLabel").textContent = status.lymph_batch_size;
   } catch (error) {
     modelsReady = false;
     engineState.textContent = "MODELS UNAVAILABLE";
@@ -349,10 +366,16 @@ async function runInference() {
     source.addEventListener("complete", (event) => {
       const result = JSON.parse(event.data);
       onProgress(result, names);
-      updateAssessment(result, names, tissueType);
-      setStatus("INFERENCE COMPLETE", "complete");
-      mapState.textContent = "INFERENCE COMPLETE";
-      releaseRunControls();
+      progressFill.style.width = "100%";
+      progressPercent.textContent = "100.0%";
+      regionsValue.innerHTML = `${result.total_regions.toLocaleString()} <small>/ ${result.total_regions.toLocaleString()}</small>`;
+      playback.finished = true;
+      playback.onDone = () => {
+        updateAssessment(result, names, tissueType);
+        setStatus("INFERENCE COMPLETE", "complete");
+        mapState.textContent = "INFERENCE COMPLETE";
+        releaseRunControls();
+      };
       source.close();
       source = null;
     });
@@ -361,6 +384,8 @@ async function runInference() {
       setStatus("INFERENCE STOPPED");
       mapState.textContent = "INFERENCE ERROR";
       setError(detail.message || "Inference failed.");
+      playback.active = false;
+      playback.onDone = null;
       releaseRunControls();
       source.close();
       source = null;

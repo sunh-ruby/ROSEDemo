@@ -28,7 +28,8 @@ main{flex:1;padding:22px 0 28px}
 .run-button:disabled{opacity:.38;cursor:not-allowed}
 .button-arrow{font-size:16px;font-weight:400}
 .intro-row{display:flex;align-items:flex-end;justify-content:space-between;padding:26px 0 22px}
-.eyebrow{display:flex;align-items:center;gap:9px;margin:0 0 11px;color:#818990;font-size:9px;letter-spacing:.2em}
+.eyebrow{display:flex;align-items:center;gap:9px;margin:0 0 11px;color:#818990;font-size:20px;letter-spacing:.2em}
+.intro-desc{margin:0;color:#a6adb3;font-size:16px;line-height:1.5;letter-spacing:.01em}
 .eyebrow-line{width:19px;height:1px;background:#d55ba9}
 h1{font-size:clamp(29px,3vw,43px);font-weight:300;letter-spacing:-.055em;line-height:1.02;margin:0;color:#f0f1ed}
 h1 span{color:#8c9295}
@@ -52,12 +53,8 @@ h1 span{color:#8c9295}
 .empty-reticle i{position:absolute;inset:17px;border:1px solid #dc73b5;border-radius:50%;opacity:.8}
 .map-grid-mark{width:44px;height:44px;background-image:linear-gradient(rgba(189,199,206,.075) 1px,transparent 1px),linear-gradient(90deg,rgba(189,199,206,.075) 1px,transparent 1px);background-size:11px 11px;opacity:.6}
 .viewport-caption{position:absolute;z-index:2;left:13px;bottom:12px;font-size:8px;letter-spacing:.16em;color:rgba(244,245,240,.54);pointer-events:none}
-.map-legend{position:absolute;z-index:2;right:12px;top:11px;display:flex;gap:11px;padding:7px 9px;background:rgba(5,6,7,.63);backdrop-filter:blur(8px);font-size:7px;letter-spacing:.12em;color:#c2c7c8}
-.map-legend[hidden],.map-legend [hidden]{display:none}
-.map-legend span{display:flex;align-items:center;gap:5px}
-.map-legend-group{display:flex;align-items:center;gap:11px}
-.legend-dot,.class-dot{display:inline-block;width:6px;height:6px;border-radius:50%}
-.cancer{background:var(--cancer)}.granuloma{background:var(--granuloma)}.necrosis{background:var(--necrosis)}.lymphocyte{background:#2ee678;box-shadow:0 0 9px rgba(46,230,120,.45)}
+.class-dot{display:inline-block;width:6px;height:6px;border-radius:50%}
+.cancer{background:var(--cancer)}.granuloma{background:var(--granuloma)}.necrosis{background:var(--necrosis)}
 .readout{padding-left:18px;border-left:1px solid var(--line);min-height:100%}
 .readout-heading{height:30px;display:flex;align-items:center;gap:9px}
 .readout-heading>div{display:flex;flex-direction:column;gap:4px}
@@ -107,4 +104,4 @@ h1 span{color:#8c9295}
 .error-message[hidden]{display:none}
 .footer-line{height:39px;display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--line);color:#596268;font-size:7px;letter-spacing:.16em;flex:none}
 @media(max-width:1100px){.app-shell{width:calc(100% - 48px)}.analysis-layout{grid-template-columns:minmax(0,1fr) minmax(0,1fr) 180px;gap:14px}.readout{padding-left:13px}.class-name{font-size:7px}.metrics-row{gap:12px}}
-@media(max-width:760px){.app-shell{width:calc(100% - 28px)}.topbar{height:62px}.system-state{gap:7px;font-size:7px}.brand-name{font-size:9px}.brand-name span{display:none}.command-row{height:auto;flex-direction:column}.path-field{height:46px}.run-button{height:44px}.intro-row{padding:24px 0 18px;align-items:flex-start;flex-direction:column;gap:10px}.analysis-layout{grid-template-columns:1fr 1fr;gap:12px}.readout{grid-column:1/-1;border-left:0;border-top:1px solid var(--line);padding:12px 0 0}.class-rows{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.readout-foot{margin-top:14px}.metrics-row{grid-template-columns:1fr 1fr;row-gap:14px}.view-meta{font-size:7px;letter-spacing:.08em}.map-legend{gap:6px;font-size:6px}.footer-line{font-size:6px;letter-spacing:.09em}}
+@media(max-width:760px){.app-shell{width:calc(100% - 28px)}.topbar{height:62px}.system-state{gap:7px;font-size:7px}.brand-name{font-size:9px}.brand-name span{display:none}.command-row{height:auto;flex-direction:column}.path-field{height:46px}.run-button{height:44px}.intro-row{padding:24px 0 18px;align-items:flex-start;flex-direction:column;gap:10px}.analysis-layout{grid-template-columns:1fr 1fr;gap:12px}.readout{grid-column:1/-1;border-left:0;border-top:1px solid var(--line);padding:12px 0 0}.class-rows{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.readout-foot{margin-top:14px}.metrics-row{grid-template-columns:1fr 1fr;row-gap:14px}.view-meta{font-size:7px;letter-spacing:.08em}.footer-line{font-size:6px;letter-spacing:.09em}}

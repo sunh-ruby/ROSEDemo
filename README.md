@@ -19,10 +19,10 @@ Wait for the TensorRT engine and YOLO model warmups and `Server ready`, then ope
 
 ## Lung mode
 
-Uses the fixed-batch-4 TensorRT ResNeXt50 engine, non-overlapping 512×512 level-0 regions, and the checkpoint's Cancer / Granuloma / Necrosis normalization. Region class counts use the checkpoint evaluation's logit threshold `> 0.5`.
+Uses the fixed-batch-4 TensorRT ResNeXt50 engine with two real regions submitted per inference update (the remaining engine slots are padded), non-overlapping 512×512 level-0 regions, and the checkpoint's Cancer / Granuloma / Necrosis normalization. Region class counts use the checkpoint evaluation's logit threshold `> 0.5`.
 
 ## Lymph Node mode
 
-Uses PathWiz `DetectMultiBackend` with FP16 and the YOLO weights from `.env`. It crops 1024×1024 at OpenSlide level 0, resizes each crop to 640×640 using linear interpolation, and runs NMS with confidence `0.5`, IoU `0.45`, and max 1,000 detections. Regions with more than 40 detections are colored green and counted as lymphocyte-sufficient. Slide adequacy is based on whether the top-five region average exceeds 40.
+Uses PathWiz `DetectMultiBackend` with FP16 and the YOLO weights from `.env`, with inference batches of two regions. It crops 1024×1024 at OpenSlide level 0, resizes each crop to 640×640 using linear interpolation, and runs NMS with confidence `0.5`, IoU `0.45`, and max 1,000 detections. Regions with more than 40 detections are colored green and counted as lymphocyte-sufficient. Slide adequacy is based on whether the top-five region average exceeds 40.
 
-Both models are loaded and warmed once at startup. Patches are scanned in a non-overlapping row-major grid; no tissue mask is currently applied. The frontend uses a single canvas for the heatmap and batched SSE progress updates.
+Both models are loaded and warmed once at startup. Patches are scanned left-to-right on every row from x=0 in a non-overlapping grid; no tissue mask is currently applied. The frontend uses a single canvas for the heatmap and batched SSE progress updates.

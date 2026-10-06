@@ -19,7 +19,7 @@ import openslide
 import torch
 import tensorrt as trt
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, Response, StreamingResponse
+from fastapi.responses import HTMLResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from torchvision import transforms
@@ -44,7 +44,8 @@ DEFAULT_SLIDE = os.environ.get("EXAMPLE_SLIDE_PATH", "/mnt/sdb/UHN/batch3/UHN_55
 LUNG_PATCH_SIZE = 512
 LYMPH_PATCH_SIZE = 1024
 YOLO_IMAGE_SIZE = 640
-LYMPH_BATCH_SIZE = 8
+LUNG_INFERENCE_BATCH_SIZE = 2
+LYMPH_BATCH_SIZE = 2
 YOLO_WEIGHTS = configured_path("LYMPH_YOLO_WEIGHTS")
 PATHWIZ_ROOT = configured_path("PATHWIZ_ROOT")
 NUM_CLASSES = 3
@@ -55,7 +56,7 @@ STD = (0.2724, 0.2838, 0.2167)
 LOGIT_THRESHOLD = 0.5
 LYMPH_DETECTION_THRESHOLD = 40
 MAX_CELLS_PER_EVENT = 1024
-UPDATE_INTERVAL_SECONDS = 0.1
+UPDATE_INTERVAL_SECONDS = 0.01
 logger = logging.getLogger("pathology-demo")
 
 
@@ -88,6 +89,7 @@ class SlideJob:
     top5_average: float = 0.0
     cursor_x: float | None = None
     cursor_y: float | None = None
+    cursor_revision: int = 0
     started_at: float | None = None
     elapsed: float = 0.0
     done: bool = False
@@ -306,6 +308,14 @@ def prepare_slide(slide_path: str, patch_size: int):
         slide.close()
 
 
+def set_active_cursor(job: SlideJob, coord: tuple[int, int]):
+    x, y = coord
+    with job.lock:
+        job.cursor_x = x / job.covered_width
+        job.cursor_y = (y + job.patch_size / 2) / job.covered_height
+        job.cursor_revision += 1
+
+
 def update_lung_job(job: SlideJob, coords: list[tuple[int, int]], logits: np.ndarray):
     probabilities = 1.0 / (1.0 + np.exp(-np.clip(logits, -40.0, 40.0)))
     positives = logits > LOGIT_THRESHOLD
@@ -318,9 +328,9 @@ def update_lung_job(job: SlideJob, coords: list[tuple[int, int]], logits: np.nda
         for class_index in range(NUM_CLASSES):
             job.class_counts[class_index] += int(positives[:, class_index].sum())
         job.pending_cells.extend(cells)
-        last_x, last_y = coords[-1]
-        job.cursor_x = (last_x + job.patch_size / 2) / job.covered_width
-        job.cursor_y = (last_y + job.patch_size / 2) / job.covered_height
+        first_x, first_y = coords[0]
+        job.cursor_x = first_x / job.covered_width
+        job.cursor_y = (first_y + job.patch_size / 2) / job.covered_height
         job.elapsed = time.perf_counter() - (job.started_at or time.perf_counter())
 
 
@@ -341,9 +351,9 @@ def update_lymph_job(job: SlideJob, coords: list[tuple[int, int]], detection_cou
                 job.top5_counts.sort(reverse=True)
         job.top5_average = sum(job.top5_counts) / len(job.top5_counts) if job.top5_counts else 0.0
         job.pending_cells.extend(cells)
-        last_x, last_y = coords[-1]
-        job.cursor_x = (last_x + job.patch_size / 2) / job.covered_width
-        job.cursor_y = (last_y + job.patch_size / 2) / job.covered_height
+        first_x, first_y = coords[0]
+        job.cursor_x = first_x / job.covered_width
+        job.cursor_y = (first_y + job.patch_size / 2) / job.covered_height
         job.elapsed = time.perf_counter() - (job.started_at or time.perf_counter())
 
 
@@ -353,7 +363,6 @@ def run_job(job: SlideJob, trt_session: TensorRTSession, yolo_session: Lymphocyt
         transforms.ToTensor(),
         transforms.Normalize(mean=MEAN, std=STD),
     ])
-    session = trt_session if job.tissue_type == "lung" else yolo_session
     try:
         with job.lock:
             job.started_at = time.perf_counter()
@@ -371,29 +380,32 @@ def run_job(job: SlideJob, trt_session: TensorRTSession, yolo_session: Lymphocyt
 
         batch_images: list[torch.Tensor] = []
         batch_coords: list[tuple[int, int]] = []
-        chunk_size = max(session.batch_size * 4, 32)
+        chunk_size = max(job.batch_size * 4, 32)
+
+        def infer_batch():
+            if not batch_images:
+                return
+            set_active_cursor(job, batch_coords[0])
+            if job.tissue_type == "lung":
+                predictions = trt_session.infer(batch_images)
+                update_lung_job(job, batch_coords, predictions)
+            else:
+                detections = yolo_session.infer(batch_images)
+                update_lymph_job(job, batch_coords, detections)
+            batch_images.clear()
+            batch_coords.clear()
+
         with ThreadPoolExecutor(max_workers=8) as executor:
             for start in range(0, len(job.coords), chunk_size):
                 coord_chunk = job.coords[start:start + chunk_size]
                 for tensor, coord in executor.map(read_and_transform, coord_chunk):
+                    if batch_coords and coord[1] != batch_coords[-1][1]:
+                        infer_batch()
                     batch_images.append(tensor)
                     batch_coords.append(coord)
-                    if len(batch_images) == session.batch_size:
-                        if job.tissue_type == "lung":
-                            predictions = trt_session.infer(batch_images)
-                            update_lung_job(job, batch_coords, predictions)
-                        else:
-                            detections = yolo_session.infer(batch_images)
-                            update_lymph_job(job, batch_coords, detections)
-                        batch_images.clear()
-                        batch_coords.clear()
-            if batch_images:
-                if job.tissue_type == "lung":
-                    predictions = trt_session.infer(batch_images)
-                    update_lung_job(job, batch_coords, predictions)
-                else:
-                    detections = yolo_session.infer(batch_images)
-                    update_lymph_job(job, batch_coords, detections)
+                    if len(batch_images) == job.batch_size:
+                        infer_batch()
+        infer_batch()
 
         slide.close()
         slide = None
@@ -423,6 +435,7 @@ def progress_payload(job: SlideJob, cells: list[list[float | int]]):
             "progress": processed / max(len(job.coords), 1),
             "cursor_x": job.cursor_x,
             "cursor_y": job.cursor_y,
+            "cursor_revision": job.cursor_revision,
             "class_counts": job.class_counts.copy(),
             "sufficient_regions": job.sufficient_regions,
             "top5_average": job.top5_average,
@@ -445,12 +458,25 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Pathology Inference Viewer", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def disable_frontend_cache(request, call_next):
+    response = await call_next(request)
+    if request.url.path == "/" or request.url.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
 @app.get("/")
 def index():
-    return FileResponse(STATIC_DIR / "index.html")
+    html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    for name in ("app.js", "style.css"):
+        html = html.replace(f"/static/{name}", f"/static/{name}?v={(STATIC_DIR / name).stat().st_mtime_ns}")
+    return HTMLResponse(html)
 
 
 @app.get("/api/status")
@@ -463,6 +489,7 @@ def status():
         "example_slide": DEFAULT_SLIDE,
         "models": {"lung": "TensorRT ResNeXt50", "lymph_node": detector.model_name},
         "batch_size": session.batch_size,
+        "inference_batch_size": min(LUNG_INFERENCE_BATCH_SIZE, session.batch_size),
         "lymph_batch_size": detector.batch_size,
         "input_name": session.input_name,
         "output_name": session.output_name,
@@ -478,10 +505,12 @@ async def start_inference(request: RunRequest):
         raise HTTPException(404, f"Slide file not found: {slide_path}")
     if request.tissue_type == "lung":
         patch_size = LUNG_PATCH_SIZE
-        batch_size = app.state.trt_session.batch_size
+        engine_batch_size = app.state.trt_session.batch_size
+        batch_size = min(LUNG_INFERENCE_BATCH_SIZE, engine_batch_size)
     else:
         patch_size = LYMPH_PATCH_SIZE
-        batch_size = app.state.lymph_session.batch_size
+        engine_batch_size = app.state.lymph_session.batch_size
+        batch_size = min(LYMPH_BATCH_SIZE, engine_batch_size)
     try:
         prepared = await asyncio.to_thread(prepare_slide, slide_path, patch_size)
     except Exception as exc:
@@ -502,6 +531,9 @@ async def start_inference(request: RunRequest):
         grid_columns=columns,
         grid_rows=rows,
         coords=coords,
+        cursor_x=coords[0][0] / covered_width,
+        cursor_y=(coords[0][1] + patch_size / 2) / covered_height,
+        cursor_revision=1,
     )
     jobs.add(job)
     thread = threading.Thread(
@@ -525,6 +557,7 @@ async def start_inference(request: RunRequest):
         "patch_size": patch_size,
         "model_input_size": LUNG_PATCH_SIZE if job.tissue_type == "lung" else YOLO_IMAGE_SIZE,
         "batch_size": batch_size,
+        "engine_batch_size": engine_batch_size,
         "class_names": CLASS_NAMES if job.tissue_type == "lung" else ("Lymphocyte",),
     }
 
@@ -542,16 +575,19 @@ async def job_events(job_id: str):
     async def event_stream():
         yield ": connected\n\n"
         last_processed = -1
+        last_cursor_revision = -1
         while True:
             with job.lock:
                 cells = job.pending_cells[:MAX_CELLS_PER_EVENT]
                 del job.pending_cells[:len(cells)]
                 processed = job.processed
+                cursor_revision = job.cursor_revision
                 done = job.done
                 error = job.error
                 pending_left = bool(job.pending_cells)
-            if cells or processed != last_processed:
+            if cells or processed != last_processed or cursor_revision != last_cursor_revision:
                 last_processed = processed
+                last_cursor_revision = cursor_revision
                 yield f"event: progress\ndata: {json.dumps(progress_payload(job, cells), separators=(',', ':'))}\n\n"
             if done and not pending_left:
                 if error:
